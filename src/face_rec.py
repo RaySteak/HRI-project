@@ -2,6 +2,10 @@ import face_recognition
 import cv2
 import numpy as np
 import socket
+import torch
+from transformers import ViTFeatureExtractor, ViTForImageClassification, AutoConfig
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 12345
@@ -22,6 +26,15 @@ face_locations = []
 face_encodings = []
 face_names = []
 process_this_frame = True
+
+# Load the ViT model
+MODEL_URL = 'nateraw/vit-age-classifier'
+model = ViTForImageClassification.from_pretrained(MODEL_URL).to(device)
+model.eval()
+transforms = ViTFeatureExtractor.from_pretrained(MODEL_URL)
+config = AutoConfig.from_pretrained(MODEL_URL)
+
+
 
 while True:
     # Grab a single frame of video
@@ -46,22 +59,34 @@ while True:
             # TODO: maybe treat the case of multiple faces
             face_location = face_locations[0]
             face_encoding = face_encodings[0]
+            top, right, bottom, left = face_location
+            top *= 4
+            right *= 4
+            bottom *= 4
+            left *= 4
+            
+            # Get the face from the frame and run inference
+            with torch.no_grad():
+                face = frame[top:bottom, left:right]
+                transformed_face = transforms(face, return_tensors = 'pt').to(device)
+                out = model(**transformed_face)
+                age_range_id = torch.argmax(out.logits).item()
 
             # See if the face is a match for the known face(s)
             matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
             
             try:
                 match_key = matches.index(True)
-                print(match_key)
+                print(f'ID: {match_key} AGE: {config.id2label[age_range_id]}')
             except ValueError:
                 print("FOUND UNKNOWN FACE, SAVING...")
                 known_face_encodings.append(face_encoding)
                 match_key = len(known_face_encodings) - 1
             
             # Send the match key to the server
-            s.sendall(("Face %04d" % match_key).encode())
+            s.sendall(("Face %04d %02d" % (match_key, age_range_id)).encode())
         else:
-            s.sendall("Face   NO".encode())
+            s.sendall("Face      NO".encode())
 
         # face_names.append(name)
 
@@ -83,6 +108,7 @@ while True:
         cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
         font = cv2.FONT_HERSHEY_DUPLEX
         cv2.putText(frame, "person", (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
+        
 
     # Display the resulting image
     cv2.imshow('Video', frame)

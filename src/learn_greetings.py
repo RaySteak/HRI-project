@@ -23,7 +23,7 @@ import socket
 from threading import Thread
 
 pip = os.getenv('PEPPER_IP')
-pport = 44293
+pport = 39755
 url = "tcp://" + pip + ":" + str(pport)
 
 host = ''
@@ -69,10 +69,12 @@ MAX_NAME_LEN = 20
 
 cur_face = None
 prev_face = None
+cur_agerange = None
 face2greeting = {}
 face2name = {}
 cur_state_face = None
 awaiting_name = False
+awaiting_parents = False
 awaiting_greeting = False
 awaiting_change_confirmation = False
 
@@ -155,23 +157,41 @@ mem.subscribeToEvent(ASRKey, "ASR", ASRKey)
 # Start the speech recognition engine with user Test_ASR
 speech_recognition.subscribe("ASR")
 
+# Age ranges for the face recognition
+id2agerange = {
+    0: (0, 2),
+    1: (3, 9),
+    2: (10, 19),
+    3: (20, 29),
+    4: (30, 39),
+    5: (40, 49),
+    6: (50, 59),
+    7: (60, 69),
+    8: (70, 100)
+}
+
 # Run the recognition loop in parallel
 def face_recognition():
     global cur_face
     global prev_face
+    global cur_agerange
     
-    r = conn.recv(len("Face 0000"))
+    r = conn.recv(len("Face 0000 00"))
     prev_face = cur_face
     if "NO" in r:
         cur_face = None
+        cur_agerange = None
         return
     cur_face = int(r.split(' ')[1])
+    cur_agerange = id2agerange[int(r.split(' ')[2])]
+    
     
 def update_frontend_face():
     global face_to_delete
     global awaiting_change_confirmation
     global awaiting_greeting
     global awaiting_name
+    global awaiting_parents
     
     if (cur_face is not None) and (cur_face in face2name):
         conn_frontend.sendall(("Id:%04d,Name:{0:<%d}" % (cur_face, MAX_NAME_LEN)).format(face2name[cur_face]))
@@ -186,15 +206,14 @@ def update_frontend_face():
         awaiting_change_confirmation = False
         awaiting_greeting = False
         awaiting_name = False
+        awaiting_parents = False
         face_to_delete = None
 
-# t = Thread(face_recognition, args = ())
-# t.run()
 
 while True:
     face_recognition()
     update_frontend_face()
-    print(cur_face)
+    print(cur_face, cur_agerange)
     
     if cur_face is None:
         if awaiting_name:
@@ -202,7 +221,7 @@ while True:
         elif awaiting_greeting:
             tts_service.say("Hey, you left before telling me how you would like to be greeted!")
         elif awaiting_change_confirmation:
-            tts_service.say("I'll take that as a now then...")
+            tts_service.say("I'll take that as a no then...")
         
         awaiting_name = False
         awaiting_greeting = False
@@ -215,8 +234,19 @@ while True:
         awaiting_change_confirmation = False
         
         if cur_face not in face2name:
-            tts_service.say("Hello, what is your name?")
-            awaiting_name = True
+            if cur_agerange[1] < 10:
+                tts_service.say("Hello, little one! Would you mind bringing your legal guardian over?")
+                awaiting_parents = True
+            else:
+                if cur_agerange[1] < 20:
+                    tts_service.say("Hello, young one! What is your name?")
+                else:
+                    if awaiting_parents:
+                        tts_service.say("Ah, you must be the legal guardian. What is your name?")
+                    else:
+                        tts_service.say("Hello, what is your name?")
+                awaiting_parents = False
+                awaiting_name = True
         else:
             if cur_face not in face2greeting:
                 tts_service.say("{}!. You have not set a greeting yet. How would you like to be greeted?".format(face2name[cur_face]))
