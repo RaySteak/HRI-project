@@ -9,6 +9,8 @@ SERVER_PORT = 12345
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect((SERVER_IP, SERVER_PORT))
 
+s.sendall('f'.encode())
+
 # Get a reference to webcam #0 (the default one)
 video_capture = cv2.VideoCapture(0)
 
@@ -59,7 +61,7 @@ while True:
             # Send the match key to the server
             s.sendall(("Face %04d" % match_key).encode())
         else:
-            s.send("Face   NO".encode())
+            s.sendall("Face   NO".encode())
 
         # face_names.append(name)
 

@@ -23,7 +23,7 @@ import socket
 from threading import Thread
 
 pip = os.getenv('PEPPER_IP')
-pport = 35837
+pport = 44293
 url = "tcp://" + pip + ":" + str(pport)
 
 host = ''
@@ -31,8 +31,41 @@ port = 12345
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind((host, port))
-s.listen(1)
+s.listen(2)
+
+def set_conn(conn, conn_type):
+    global conn_face
+    global conn_frontend
+    
+    if conn_type == 'f': # face recognition
+        conn_face = conn
+        print("Face recognition connected")
+    elif conn_type == 'i': # interface (frontend)
+        print("Frontend connected")
+        conn_frontend = conn
+        
+
 conn, addr = s.accept()
+conn_type = conn.recv(1).decode('utf-8')
+set_conn(conn, conn_type)
+
+conn, addr = s.accept()
+conn_type = conn.recv(1).decode('utf-8')
+set_conn(conn, conn_type)
+
+face_to_delete = None
+def frontend_recv_task():
+    global face_to_delete
+    
+    while True:
+        r = conn_frontend.recv(5)
+        print(r)
+        if r.startswith('D'):
+            face_to_delete = int(r[1:])
+t = Thread(target = frontend_recv_task)
+t.start()
+
+MAX_NAME_LEN = 20
 
 cur_face = None
 prev_face = None
@@ -133,12 +166,34 @@ def face_recognition():
         cur_face = None
         return
     cur_face = int(r.split(' ')[1])
+    
+def update_frontend_face():
+    global face_to_delete
+    global awaiting_change_confirmation
+    global awaiting_greeting
+    global awaiting_name
+    
+    if (cur_face is not None) and (cur_face in face2name):
+        conn_frontend.sendall(("Id:%04d,Name:{0:<%d}" % (cur_face, MAX_NAME_LEN)).format(face2name[cur_face]))
+    else:
+        conn_frontend.sendall(" " * (MAX_NAME_LEN + 4 + 9))
+    
+    if face_to_delete is not None:
+        if face_to_delete in face2name:
+            face2name.pop(face_to_delete)
+        if face_to_delete in face2greeting:
+            face2greeting.pop(face_to_delete)
+        awaiting_change_confirmation = False
+        awaiting_greeting = False
+        awaiting_name = False
+        face_to_delete = None
 
 # t = Thread(face_recognition, args = ())
 # t.run()
 
 while True:
     face_recognition()
+    update_frontend_face()
     print(cur_face)
     
     if cur_face is None:
@@ -182,6 +237,7 @@ while True:
             rec_phrase = rec[0]
             whole_phrase = rec[1]
             name = whole_phrase[whole_phrase.find(rec_phrase) + len(rec_phrase):].strip()
+            name = name[:MAX_NAME_LEN]
             face2name[cur_face] = name
             tts_service.say("Say, {}, how would you like to be greeted?".format(name))
             awaiting_name = False
